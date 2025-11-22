@@ -7,7 +7,7 @@ yfinance==0.2.40
 feedparser==6.0.10
 joblib==1.3.2
 plotly==5.20.0
-matplotlib==3.8.2
+matplotlib==3.7.2
 SQLAlchemy==2.0.25
 numpy==1.26.4
 pandas==2.2.3
