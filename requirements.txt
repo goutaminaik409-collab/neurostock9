@@ -2,7 +2,7 @@
 Flask==3.1.2
 Flask-Login==0.6.3
 Flask-Caching==2.1.0
-Werkzeug==3.0.1
+Werkzeug==3.1.0  # **FIXED VERSION**
 gunicorn==21.2.0
 
 # Data Science and Visualization
