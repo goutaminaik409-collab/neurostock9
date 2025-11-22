@@ -1,16 +1,9 @@
 """
 =======================================================================================================
   🧠 NEUROSTOCK - FINAL ULTIMATE VERSION (GLOBAL EDITION)
-  📈 (Expanded Ticker List: India + USA + Crypto)
-  ------------------------------------------------------------------------------------------------------
-  NOTE: ALL Google Drive links provided by the user are included below in the MODEL_LINKS dictionary 
-        for reference. The script's execution prioritizes training or loading local models 
-        (models_v17_aggressive).
-  ------------------------------------------------------------------------------------------------------
-  PROFESSOR ANSWER KEY:
-  1. Database: SQLite (stock_data_v2.db)
-  2. Data Storage: 'stock_cache' table 
-  3. AI Model: LSTM 
+  ✅ Fixed: Login/Register (Database Save)
+  ✅ Fixed: Yahoo Data (Anti-Block Headers)
+  ✅ Included: ALL Links & ALL Tickers
 =======================================================================================================
 """
 
@@ -22,7 +15,9 @@ import joblib
 import feedparser
 import sqlite3
 import traceback
-import requests  # <--- ADDED THIS IMPORT FOR THE FIX
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from datetime import date, datetime, timedelta
 from textblob import TextBlob
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash
@@ -42,7 +37,7 @@ login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
 
-# --- 🔗 ALL GOOGLE DRIVE LINKS (INCLUDED AS CODE CONSTANTS) ---
+# --- 🔗 ALL GOOGLE DRIVE LINKS ---
 
 DB_FILE = "stock_data_v2.db"
 DB_LINK = "https://drive.google.com/file/d/1Bt8eXGrkxqyDVi_LUyF9Mwk6ooqOfwsn/view?usp=sharing"
@@ -121,7 +116,7 @@ FEATURES_LIST = ['Close', 'Volume', 'RSI', 'MACD', 'EMA', 'ATR', 'BB_UPPER', 'BB
                  'SMA_30', 'Close_Lag_1', 'Close_Lag_2', 'Close_Lag_3']
 TARGET_COL = 'Pct_Change'
 
-# --- 🌍 EXPANDED TICKER LIST (INDIA + GLOBAL) ---
+# --- 🌍 FULL TICKER LIST (INDIA + GLOBAL) ---
 TICKERS_DATA = [
     # --- USA / GLOBAL ---
     {"symbol": "AAPL", "name": "Apple Inc. (USA)"},
@@ -179,33 +174,39 @@ class User(UserMixin):
 
 @login_manager.user_loader
 def load_user(user_id):
-    with sqlite3.connect(DB_FILE) as conn:
-        u = conn.cursor().execute("SELECT id, username, password, fullname, avatar FROM users WHERE id = ?", (user_id,)).fetchone()
-        if u: return User(id=u[0], username=u[1], fullname=u[3], avatar=u[4])
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            u = conn.cursor().execute("SELECT id, username, password, fullname, avatar FROM users WHERE id = ?", (user_id,)).fetchone()
+            if u: return User(id=u[0], username=u[1], fullname=u[3], avatar=u[4])
+    except: pass
     return None
 
 def init_db():
     """Creates the SQL Tables automatically."""
-    with sqlite3.connect(DB_FILE) as conn:
-        c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS users
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      username TEXT UNIQUE,
-                      password TEXT,
-                      fullname TEXT,
-                      avatar TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS portfolio
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      user_id INTEGER,
-                      ticker TEXT,
-                      shares REAL,
-                      avg_price REAL)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS stock_cache
-                     (ticker TEXT,
-                      date TIMESTAMP,
-                      Open REAL, High REAL, Low REAL, Close REAL, Volume REAL,
-                      PRIMARY KEY (ticker, date))''')
-        conn.commit()
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            c = conn.cursor()
+            c.execute('''CREATE TABLE IF NOT EXISTS users
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          username TEXT UNIQUE,
+                          password TEXT,
+                          fullname TEXT,
+                          avatar TEXT)''')
+            c.execute('''CREATE TABLE IF NOT EXISTS portfolio
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          user_id INTEGER,
+                          ticker TEXT,
+                          shares REAL,
+                          avg_price REAL)''')
+            c.execute('''CREATE TABLE IF NOT EXISTS stock_cache
+                         (ticker TEXT,
+                          date TIMESTAMP,
+                          Open REAL, High REAL, Low REAL, Close REAL, Volume REAL,
+                          PRIMARY KEY (ticker, date))''')
+            conn.commit()
+            print("DB Initialized Successfully")
+    except Exception as e:
+        print(f"DB Init Failed: {e}")
 
 init_db()
 
@@ -276,6 +277,7 @@ def save_to_db(ticker, df):
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute("DELETE FROM stock_cache WHERE ticker = ?", (ticker,))
             save_df.to_sql('stock_cache', conn, if_exists='append', index=False)
+            conn.commit()
     except Exception as e:
         print(f"DB Save Error: {e}")
 
@@ -291,41 +293,48 @@ def load_from_db(ticker):
         return df
     except: return pd.DataFrame()
 
-def get_latest_date(ticker):
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            r = conn.cursor().execute("SELECT MAX(date) FROM stock_cache WHERE ticker = ?", (ticker,)).fetchone()
-            if r and r[0]: return pd.to_datetime(r[0])
-    except: pass
-    return None
+# --- GOLDEN FIX: ROBUST REQUEST SESSION ---
+def get_robust_session():
+    session = requests.Session()
+    retry = Retry(connect=3, backoff_factor=0.5)
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Referer': 'https://www.google.com/'
+    })
+    return session
 
 @cache.memoize(timeout=300)
 def get_data(ticker):
     """Smart Fetch: Check DB first, then Yahoo with User-Agent Fix"""
     print(f"Processing {ticker}...")
     
-    # 1. Check Local DB Cache (Keep your existing logic)
-    last_date = get_latest_date(ticker)
-    today = pd.Timestamp.today().normalize()
-    is_fresh = False
-    if last_date:
-        if (today - last_date).days < 2: is_fresh = True
-        if today.weekday() > 4 and (today - last_date).days < 4: is_fresh = True
-
-    if is_fresh:
-        df = load_from_db(ticker)
-        if not df.empty: return add_features(df)
-
-    # 2. Fetch from Yahoo (FIXED WITH USER-AGENT)
+    # 1. Check Local DB Cache
     try:
-        # Create a session to trick Yahoo into thinking we are a Chrome browser
-        session = requests.Session()
-        session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
-        })
+        with sqlite3.connect(DB_FILE) as conn:
+            r = conn.cursor().execute("SELECT MAX(date) FROM stock_cache WHERE ticker = ?", (ticker,)).fetchone()
+            last_date = pd.to_datetime(r[0]) if r and r[0] else None
 
+        today = pd.Timestamp.today().normalize()
+        is_fresh = False
+        if last_date:
+            if (today - last_date).days < 2: is_fresh = True
+            if today.weekday() > 4 and (today - last_date).days < 4: is_fresh = True
+
+        if is_fresh:
+            df = load_from_db(ticker)
+            if not df.empty: return add_features(df)
+    except: pass
+
+    # 2. Fetch from Yahoo (THE FIX IS HERE)
+    try:
+        session = get_robust_session()
         stock = yf.Ticker(ticker, session=session)
-        df = stock.history(period='5y')
+        df = stock.history(period='2y')
         
         if not df.empty:
             if df.index.tz is not None: df.index = df.index.tz_localize(None)
@@ -333,8 +342,7 @@ def get_data(ticker):
             save_to_db(ticker, df_clean)
             return add_features(df_clean)
     except Exception as e:
-        print(f"Yahoo Fetch Error for {ticker}: {e}")
-        pass
+        print(f"Yahoo Download Error for {ticker}: {e}")
     
     # 3. Fallback to DB
     df_db = load_from_db(ticker)
@@ -353,9 +361,7 @@ def get_model(ticker, feature_data, seq_len, horizon):
             scaler = joblib.load(s_path)
             if hasattr(scaler, 'n_features_in_') and scaler.n_features_in_ == len(FEATURES_LIST):
                 return scaler, load_model(m_path, compile=False)
-        except:
-            print(f"Error loading cached model for {ticker}. Retraining...")
-            pass
+        except: pass
 
     # 2. Train New Model if data is sufficient
     if len(feature_data) < (seq_len + horizon + 50): return None, None 
@@ -383,7 +389,7 @@ def get_model(ticker, feature_data, seq_len, horizon):
     ])
     model.compile(optimizer='adam', loss='mse')
     print(f"Training new model for {ticker} (Seq:{seq_len}, Hor:{horizon})...")
-    model.fit(np.array(X), np.array(y), epochs=20, batch_size=32, verbose=0)
+    model.fit(np.array(X), np.array(y), epochs=15, batch_size=32, verbose=0)
     
     # Save Model and Scaler
     joblib.dump(scaler, s_path)
@@ -434,12 +440,13 @@ def login():
 
 @app.route('/register', methods=['POST'])
 def register():
-    u = request.form['username']
-    p = generate_password_hash(request.form['password'])
     try:
+        u = request.form['username']
+        p = generate_password_hash(request.form['password'])
         with sqlite3.connect(DB_FILE) as conn:
             conn.cursor().execute("INSERT INTO users (username, password, fullname, avatar) VALUES (?, ?, ?, ?)",
                                   (u, p, "New Trader", "https://cdn-icons-png.flaticon.com/512/3135/3135715.png"))
+            conn.commit() # FIXED: SAVE THE USER
         flash('Created! Login.')
     except: flash('Username taken.')
     return redirect(url_for('login'))
