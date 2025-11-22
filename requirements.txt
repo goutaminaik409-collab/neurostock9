@@ -15,7 +15,7 @@ joblib==1.3.2
 
 # Financial Data and NLP
 yfinance==0.2.40
-feedparser==6.0.10
+feedparser==6.0.11
 textblob==0.17.1
 
 # Database
