@@ -3,8 +3,8 @@ Flask-Login==0.6.3
 Flask-Caching==2.1.0
 Werkzeug==3.0.1
 gunicorn==21.2.0
-numpy==1.26.4
-pandas==2.2.0
+numpy
+pandas
 yfinance==0.2.40
 feedparser==6.0.10
 textblob==0.17.1
