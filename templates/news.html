@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>NeuroStock | Global Intelligence</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    
+    <style>
+        /* --- FIXED SEARCH BAR STYLES --- */
+        .search-container {
+            grid-column: span 4;
+            margin-bottom: 25px;
+        }
+
+        .search-wrapper {
+            display: flex;
+            align-items: center;
+            background: #1e293b; /* Dark card background */
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 8px 12px; /* Padding inside the box */
+            gap: 15px; /* CRITICAL FIX: Forces space between Icon, Input, and Button */
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+        }
+
+        .search-wrapper:focus-within {
+            border-color: #38bdf8; /* Sky Blue Glow on focus */
+            box-shadow: 0 0 15px rgba(56, 189, 248, 0.2);
+        }
+
+        .search-icon {
+            color: #94a3b8;
+            font-size: 1.1rem;
+            padding-left: 5px;
+            /* No extra padding-right needed because 'gap' handles it now */
+        }
+
+        .search-input {
+            flex: 1; /* This makes the input take up all remaining space */
+            background: transparent;
+            border: none;
+            color: white;
+            font-size: 1rem;
+            padding: 10px 0; /* Vertical padding for better click area */
+            outline: none;
+            font-family: 'Inter', sans-serif;
+            min-width: 0; /* Prevents input from overflowing flex container */
+        }
+
+        .search-input::placeholder {
+            color: #64748b;
+        }
+
+        .btn-search {
+            background: #38bdf8;
+            color: #0f172a;
+            border: none;
+            padding: 10px 25px;
+            border-radius: 8px;
+            font-weight: 700;
+            cursor: pointer;
+            white-space: nowrap; /* Prevents text from wrapping */
+            transition: background 0.2s;
+        }
+
+        .btn-search:hover {
+            background: #0ea5e9;
+        }
+
+        /* --- NEWS GRID --- */
+        .news-grid-area {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            grid-column: span 4;
+        }
+
+        .news-card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            min-height: 220px;
+            transition: transform 0.2s;
+        }
+
+        .news-card:hover {
+            transform: translateY(-5px);
+            border-color: #38bdf8;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <nav class="sidebar">
+            <div class="brand"><i class="fa-solid fa-layer-group"></i> NeuroStock</div>
+            <ul class="nav-links">
+                <li><a href="/"><i class="fa-solid fa-border-all"></i> Dashboard</a></li>
+                <li><a href="/portfolio"><i class="fa-solid fa-wallet"></i> Portfolio</a></li>
+                <li class="active"><a href="/news"><i class="fa-solid fa-bolt"></i> Markets</a></li>
+                <li style="margin-top: auto;"><a href="/settings"><i class="fa-solid fa-sliders"></i> Settings</a></li>
+            </ul>
+        </nav>
+
+        <main class="main-content">
+            <header class="page-header">
+                <div class="header-left"><h2>Global Intelligence</h2></div>
+                <div class="header-right">
+                    <div class="user-profile">
+                        <div class="avatar">{{ user.username[0].upper() if user else 'A' }}</div>
+                        <div class="user-name">{{ user.username if user else 'Admin' }}</div>
+                    </div>
+                </div>
+            </header>
+
+            <div class="bento-grid">
+                
+                <div class="search-container">
+                    <div class="search-wrapper">
+                        <i class="fa-solid fa-magnifying-glass search-icon"></i>
+                        <input type="text" id="newsTicker" class="search-input" placeholder="Search Ticker (e.g. TSLA, BTC-USD)..." value="AAPL">
+                        <button onclick="getNews()" id="fetchBtn" class="btn-search">Fetch Intelligence</button>
+                    </div>
+                </div>
+
+                <div id="newsGrid" class="news-grid-area">
+                    </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // Allow "Enter" key to trigger search
+        document.getElementById("newsTicker").addEventListener("keypress", function(event) {
+            if (event.key === "Enter") getNews();
+        });
+
+        async function getNews() {
+            const t = document.getElementById('newsTicker').value || 'AAPL';
+            const container = document.getElementById('newsGrid');
+            const btn = document.getElementById('fetchBtn');
+            
+            // Loading State
+            btn.innerText = "Scanning...";
+            btn.disabled = true;
+            container.innerHTML = `
+                <div style="grid-column:span 4; text-align:center; padding:60px; color:#94a3b8;">
+                    <i class="fa-solid fa-circle-notch fa-spin" style="font-size: 2rem; color: #38bdf8; margin-bottom: 15px;"></i>
+                    <p>Analyzing Global Markets for <strong>${t.toUpperCase()}</strong>...</p>
+                </div>`;
+
+            try {
+                const res = await fetch('/api/news', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ticker: t})
+                });
+                const data = await res.json();
+                
+                container.innerHTML = ''; // Clear loading
+
+                if(data.status === 'success' && data.news.length > 0) {
+                    data.news.forEach(n => {
+                        // Sentiment Color Logic
+                        let badgeClass = "color:#94a3b8; border:1px solid #475569;"; 
+                        if(n.sentiment === 'Bullish') badgeClass = "color:#22c55e; border:1px solid rgba(34, 197, 94, 0.3); background: rgba(34, 197, 94, 0.1);"; 
+                        if(n.sentiment === 'Bearish') badgeClass = "color:#ef4444; border:1px solid rgba(239, 68, 68, 0.3); background: rgba(239, 68, 68, 0.1);";
+
+                        let card = `
+                        <div class="news-card">
+                            <div>
+                                <div style="display:flex; justify-content:space-between; margin-bottom:15px; align-items:center;">
+                                    <span style="font-size:0.85rem; color:#94a3b8;"><i class="fa-regular fa-clock"></i> ${n.published ? n.published.slice(0,16) : 'Recent'}</span>
+                                    <span style="font-size:0.75rem; font-weight:bold; padding:4px 10px; border-radius:20px; ${badgeClass}">${n.sentiment}</span>
+                                </div>
+                                <h4 style="margin:0 0 15px 0; line-height:1.5; font-size: 1.1rem; color: #f1f5f9; font-weight: 600;">${n.title}</h4>
+                            </div>
+                            <a href="${n.link}" target="_blank" style="color:#38bdf8; text-decoration:none; font-size:0.9rem; font-weight:600; display:inline-flex; align-items:center; gap:8px; transition: gap 0.2s;">
+                                Read Analysis <i class="fa-solid fa-arrow-right"></i>
+                            </a>
+                        </div>`;
+                        container.innerHTML += card;
+                    });
+                } else {
+                    container.innerHTML = '<div style="grid-column:span 4; text-align:center; padding:50px; color:#94a3b8;">No recent news found.</div>';
+                }
+            } catch(e) {
+                console.error(e);
+                container.innerHTML = '<div style="grid-column:span 4; text-align:center; color:#ef4444; padding:50px;">Failed to load news.</div>';
+            } finally {
+                btn.innerText = "Fetch Intelligence";
+                btn.disabled = false;
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', getNews);
+    </script>
+</body>
+</html>

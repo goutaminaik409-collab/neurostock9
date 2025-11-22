@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>NeuroStock | Portfolio</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        /* Inline fixes for the portfolio table */
+        .btn-sm { padding: 6px 12px; font-size: 0.85rem; cursor: pointer; border: none; border-radius: 6px; transition: 0.2s; }
+        .btn-red { background-color: rgba(239, 68, 68, 0.2); color: #ef4444; }
+        .btn-red:hover { background-color: #ef4444; color: white; }
+        .text-green { color: #10b981; font-weight: 600; }
+        .text-red { color: #ef4444; font-weight: 600; }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <nav class="sidebar">
+            <div class="brand"><i class="fa-solid fa-layer-group"></i> NeuroStock</div>
+            <ul class="nav-links">
+                <li><a href="/"><i class="fa-solid fa-border-all"></i> Dashboard</a></li>
+                <li class="active"><a href="/portfolio"><i class="fa-solid fa-wallet"></i> Portfolio</a></li>
+                <li><a href="/news"><i class="fa-solid fa-bolt"></i> Markets</a></li>
+                <li><a href="/settings"><i class="fa-solid fa-sliders"></i> Settings</a></li>
+                <li><a href="/logout" style="color: #ef4444; margin-top: 20px;"><i class="fa-solid fa-power-off"></i> Logout</a></li>
+            </ul>
+        </nav>
+
+        <main class="main-content">
+            <header class="page-header">
+                <div class="header-left"><h2>Wealth Overview</h2></div>
+                <div class="header-right">
+                    <div class="user-profile">
+                        <div class="avatar">{{ user.username[0].upper() }}</div>
+                        <div class="user-name">{{ user.username }}</div>
+                    </div>
+                </div>
+            </header>
+
+            <div class="bento-grid">
+                <div class="bento-card">
+                    <span class="kpi-label">Net Worth</span>
+                    <div class="kpi-value" id="totalValue">Loading...</div>
+                </div>
+                <div class="bento-card">
+                    <span class="kpi-label">Total P/L</span>
+                    <div class="kpi-value" id="totalGain">--</div>
+                </div>
+                <div class="bento-card">
+                    <span class="kpi-label">Assets</span>
+                    <div class="kpi-value" id="assetCount">--</div>
+                </div>
+                <div class="bento-card">
+                    <span class="kpi-label">Status</span>
+                    <div class="kpi-value" style="color:#10b981">Active</div>
+                </div>
+
+                <div class="bento-card span-3" style="min-height: 500px;">
+                    <div style="display:flex; justify-content:space-between; margin-bottom:20px;">
+                        <span class="kpi-label">Holdings</span>
+                    </div>
+                    <div class="table-container">
+                        <table class="stock-table">
+                            <thead>
+                                <tr>
+                                    <th>Asset</th>
+                                    <th>Qty</th>
+                                    <th>Avg Price</th>
+                                    <th>Cur Price</th>
+                                    <th>Value</th>
+                                    <th>P/L</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="portfolioTable">
+                                </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="bento-card">
+                    <span class="kpi-label">Add Position</span>
+                    <div style="display:flex; flex-direction:column; gap:15px; margin-top:15px;">
+                        <input type="text" id="pTicker" class="search-input" placeholder="Ticker (e.g. AAPL)" style="padding:12px 20px;">
+                        <input type="number" id="pShares" class="search-input" placeholder="Shares" style="padding:12px 20px;">
+                        <input type="number" id="pPrice" class="search-input" placeholder="Avg Price" style="padding:12px 20px;">
+                        <button onclick="addToPortfolio()" id="addAssetBtn" class="btn-glow" style="width:100%; justify-content:center;">Add Asset</button>
+                    </div>
+                    <div style="margin-top:40px;">
+                        <span class="kpi-label">Allocation</span>
+                        <div style="height:200px; position:relative;">
+                            <canvas id="allocationChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        let myChart = null;
+
+        // Load data immediately on page load
+        document.addEventListener('DOMContentLoaded', loadPortfolio);
+
+        async function loadPortfolio() {
+            try {
+                // Note: Route updated to match your Python code (/api/portfolio)
+                const response = await fetch('/api/portfolio');
+                const result = await response.json();
+
+                if (result.status !== 'success') {
+                    console.error("Failed to load data");
+                    return;
+                }
+
+                // 1. Update Summary Cards
+                const summary = result.summary;
+                document.getElementById('totalValue').innerText = `$${summary.total_value.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+                
+                const plElem = document.getElementById('totalGain');
+                const isPos = summary.total_gain >= 0;
+                plElem.innerText = `${isPos ? '+' : ''}$${summary.total_gain.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+                plElem.style.color = isPos ? '#10b981' : '#ef4444';
+                
+                document.getElementById('assetCount').innerText = result.holdings.length;
+
+                // 2. Build Table
+                const tableBody = document.getElementById('portfolioTable');
+                tableBody.innerHTML = '';
+                
+                result.holdings.forEach(item => {
+                    const isProfit = item.gain_loss >= 0;
+                    const plClass = isProfit ? 'text-green' : 'text-red';
+                    
+                    const row = `
+                        <tr>
+                            <td style="font-weight:bold; color:#3b82f6;">${item.ticker}</td>
+                            <td>${item.shares}</td>
+                            <td>$${item.avg_price.toFixed(2)}</td>
+                            <td>$${item.current_price.toFixed(2)}</td>
+                            <td>$${item.total_value.toFixed(2)}</td>
+                            <td class="${plClass}">
+                                ${isProfit ? '+' : ''}${item.gain_loss.toFixed(2)}
+                            </td>
+                            <td>
+                                <button class="btn-sm btn-red" onclick="deleteAsset(${item.id})">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                    tableBody.innerHTML += row;
+                });
+
+                // 3. Update Chart
+                renderChart(result.allocation.labels, result.allocation.data);
+
+            } catch (error) {
+                console.error("Error loading portfolio:", error);
+            }
+        }
+
+        async function addToPortfolio() {
+            const ticker = document.getElementById('pTicker').value;
+            const shares = document.getElementById('pShares').value;
+            const price = document.getElementById('pPrice').value;
+
+            if(!ticker || !shares || !price) return alert("Please fill all fields");
+
+            const btn = document.getElementById('addAssetBtn');
+            const originalText = btn.innerText;
+            btn.innerText = "Saving...";
+            btn.disabled = true;
+
+            try {
+                await fetch('/api/portfolio/add', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ ticker, shares, price })
+                });
+
+                // Clear inputs
+                document.getElementById('pTicker').value = '';
+                document.getElementById('pShares').value = '';
+                document.getElementById('pPrice').value = '';
+                
+                loadPortfolio(); // Refresh data
+            } catch(e) {
+                alert("Error adding asset");
+            } finally {
+                btn.innerText = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        async function deleteAsset(id) {
+            if(!confirm("Remove this asset?")) return;
+
+            await fetch('/api/portfolio/delete', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ id })
+            });
+            loadPortfolio();
+        }
+
+        function renderChart(labels, data) {
+            const ctx = document.getElementById('allocationChart').getContext('2d');
+            if (myChart) myChart.destroy();
+
+            myChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#ec4899'],
+                        borderWidth: 0,
+                        hoverOffset: 10
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'right', labels: { color: '#94a3b8', font: {size: 11} } }
+                    },
+                    cutout: '70%'
+                }
+            });
+        }
+    </script>
+</body>
+</html>
