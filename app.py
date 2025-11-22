@@ -1,16 +1,16 @@
 """
 =======================================================================================================
- 🧠 NEUROSTOCK - FINAL ULTIMATE VERSION (GLOBAL EDITION)
- 📈 (Expanded Ticker List: India + USA + Crypto)
- ------------------------------------------------------------------------------------------------------
- NOTE: ALL Google Drive links provided by the user are included below in the MODEL_LINKS dictionary 
-       for reference. The script's execution prioritizes training or loading local models 
-       (models_v17_aggressive).
- ------------------------------------------------------------------------------------------------------
- PROFESSOR ANSWER KEY:
- 1. Database: SQLite (stock_data_v2.db)
- 2. Data Storage: 'stock_cache' table 
- 3. AI Model: LSTM 
+  🧠 NEUROSTOCK - FINAL ULTIMATE VERSION (GLOBAL EDITION)
+  📈 (Expanded Ticker List: India + USA + Crypto)
+  ------------------------------------------------------------------------------------------------------
+  NOTE: ALL Google Drive links provided by the user are included below in the MODEL_LINKS dictionary 
+        for reference. The script's execution prioritizes training or loading local models 
+        (models_v17_aggressive).
+  ------------------------------------------------------------------------------------------------------
+  PROFESSOR ANSWER KEY:
+  1. Database: SQLite (stock_data_v2.db)
+  2. Data Storage: 'stock_cache' table 
+  3. AI Model: LSTM 
 =======================================================================================================
 """
 
@@ -22,6 +22,7 @@ import joblib
 import feedparser
 import sqlite3
 import traceback
+import requests  # <--- ADDED FOR FIX
 from datetime import date, datetime, timedelta
 from textblob import TextBlob
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash
@@ -188,22 +189,22 @@ def init_db():
     with sqlite3.connect(DB_FILE) as conn:
         c = conn.cursor()
         c.execute('''CREATE TABLE IF NOT EXISTS users
-                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                     username TEXT UNIQUE,
-                     password TEXT,
-                     fullname TEXT,
-                     avatar TEXT)''')
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      username TEXT UNIQUE,
+                      password TEXT,
+                      fullname TEXT,
+                      avatar TEXT)''')
         c.execute('''CREATE TABLE IF NOT EXISTS portfolio
-                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                     user_id INTEGER,
-                     ticker TEXT,
-                     shares REAL,
-                     avg_price REAL)''')
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      user_id INTEGER,
+                      ticker TEXT,
+                      shares REAL,
+                      avg_price REAL)''')
         c.execute('''CREATE TABLE IF NOT EXISTS stock_cache
-                    (ticker TEXT,
-                     date TIMESTAMP,
-                     Open REAL, High REAL, Low REAL, Close REAL, Volume REAL,
-                     PRIMARY KEY (ticker, date))''')
+                     (ticker TEXT,
+                      date TIMESTAMP,
+                      Open REAL, High REAL, Low REAL, Close REAL, Volume REAL,
+                      PRIMARY KEY (ticker, date))''')
         conn.commit()
 
 init_db()
@@ -300,7 +301,7 @@ def get_latest_date(ticker):
 
 @cache.memoize(timeout=300)
 def get_data(ticker):
-    """Smart Fetch: Check DB first, then Yahoo"""
+    """Smart Fetch: Check DB first, then Yahoo with User-Agent Fix"""
     print(f"Processing {ticker}...")
     last_date = get_latest_date(ticker)
     today = pd.Timestamp.today().normalize()
@@ -314,15 +315,23 @@ def get_data(ticker):
         df = load_from_db(ticker)
         if not df.empty: return add_features(df)
 
+    # --- FIX START: Add Custom Session for Render ---
     try:
-        stock = yf.Ticker(ticker)
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+        })
+
+        stock = yf.Ticker(ticker, session=session)
         df = stock.history(period='5y')
         if not df.empty:
             if df.index.tz is not None: df.index = df.index.tz_localize(None)
             df_clean = flatten_yfinance_data(df)
             save_to_db(ticker, df_clean)
             return add_features(df_clean)
-    except: pass
+    except Exception as e:
+        print(f"Yahoo Fetch Error: {e}")
+    # --- FIX END ---
     
     df_db = load_from_db(ticker)
     return add_features(df_db) if not df_db.empty else pd.DataFrame()
@@ -358,7 +367,7 @@ def get_model(ticker, feature_data, seq_len, horizon):
 
     if not X: return None, None
 
-    # Aggressive LSTM Architecture (Line 290)
+    # Aggressive LSTM Architecture
     model = Sequential([
         Input(shape=(seq_len, len(FEATURES_LIST))),
         LSTM(128, return_sequences=True), 
@@ -528,6 +537,7 @@ def predict():
         score, sig, col = calculate_neuro_score(hist.iloc[-1], ai_roi)
 
         try:
+            # Also fix session for fundamentals if needed, but fast_info often works
             s = yf.Ticker(ticker)
             fund = {'marketCap': s.fast_info.market_cap, 'high52': round(s.fast_info.year_high, 2), 'sector': s.info.get('sector', 'Unknown'), 'peRatio': s.info.get('trailingPE', 'N/A')}
         except: fund = {'marketCap': 'N/A', 'peRatio': 'N/A', 'sector': 'N/A', 'high52': 'N/A'}
