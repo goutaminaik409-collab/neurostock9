@@ -22,7 +22,7 @@ import joblib
 import feedparser
 import sqlite3
 import traceback
-import requests  # <--- ADDED FOR FIX
+import requests  # <--- ADDED THIS IMPORT FOR THE FIX
 from datetime import date, datetime, timedelta
 from textblob import TextBlob
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash
@@ -303,9 +303,10 @@ def get_latest_date(ticker):
 def get_data(ticker):
     """Smart Fetch: Check DB first, then Yahoo with User-Agent Fix"""
     print(f"Processing {ticker}...")
+    
+    # 1. Check Local DB Cache (Keep your existing logic)
     last_date = get_latest_date(ticker)
     today = pd.Timestamp.today().normalize()
-    
     is_fresh = False
     if last_date:
         if (today - last_date).days < 2: is_fresh = True
@@ -315,8 +316,9 @@ def get_data(ticker):
         df = load_from_db(ticker)
         if not df.empty: return add_features(df)
 
-    # --- FIX START: Add Custom Session for Render ---
+    # 2. Fetch from Yahoo (FIXED WITH USER-AGENT)
     try:
+        # Create a session to trick Yahoo into thinking we are a Chrome browser
         session = requests.Session()
         session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
@@ -324,15 +326,17 @@ def get_data(ticker):
 
         stock = yf.Ticker(ticker, session=session)
         df = stock.history(period='5y')
+        
         if not df.empty:
             if df.index.tz is not None: df.index = df.index.tz_localize(None)
             df_clean = flatten_yfinance_data(df)
             save_to_db(ticker, df_clean)
             return add_features(df_clean)
     except Exception as e:
-        print(f"Yahoo Fetch Error: {e}")
-    # --- FIX END ---
+        print(f"Yahoo Fetch Error for {ticker}: {e}")
+        pass
     
+    # 3. Fallback to DB
     df_db = load_from_db(ticker)
     return add_features(df_db) if not df_db.empty else pd.DataFrame()
 
